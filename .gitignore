@@ -20,6 +20,7 @@ frontend/*.tsbuildinfo
 data/answers.json
 data/runs.json
 data/*.local.json
+layout examples/
 
 .env
 .env.*
