@@ -1,0 +1,72 @@
+[
+  {
+    "id": 1,
+    "topic": "spring",
+    "difficulty": "easy",
+    "question": "What does @Service indicate in Spring?",
+    "options": [
+      "A repository bean",
+      "A service-layer bean",
+      "A configuration class",
+      "An entity"
+    ],
+    "correctAnswer": "A service-layer bean",
+    "explanation": "@Service marks a class as a service component managed by Spring."
+  },
+  {
+    "id": 2,
+    "topic": "sql",
+    "difficulty": "medium",
+    "question": "What is the main purpose of an index?",
+    "options": [
+      "To slow down writes",
+      "To enforce transactions",
+      "To speed up lookups",
+      "To replace joins"
+    ],
+    "correctAnswer": "To speed up lookups",
+    "explanation": "Indexes improve query performance for filters, sorts, and joins, though they add write cost."
+  },
+  {
+    "id": 3,
+    "topic": "rest",
+    "difficulty": "easy",
+    "question": "Which HTTP method is typically used to create a new resource?",
+    "options": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "correctAnswer": "POST",
+    "explanation": "POST is the usual choice for resource creation when the server defines the final resource URI."
+  },
+  {
+    "id": 4,
+    "topic": "collections",
+    "difficulty": "medium",
+    "question": "Which Java collection is the best fit when keys must map to counts?",
+    "options": [
+      "List",
+      "Set",
+      "Map",
+      "Queue"
+    ],
+    "correctAnswer": "Map",
+    "explanation": "A Map lets you associate each key with a value such as a count."
+  },
+  {
+    "id": 5,
+    "topic": "transactions",
+    "difficulty": "medium",
+    "question": "What is the main benefit of @Transactional in a service method?",
+    "options": [
+      "It automatically validates DTOs",
+      "It creates a transaction boundary for grouped operations",
+      "It makes the method asynchronous",
+      "It replaces exception handling"
+    ],
+    "correctAnswer": "It creates a transaction boundary for grouped operations",
+    "explanation": "@Transactional lets related operations commit or roll back together as one unit."
+  }
+]
