@@ -1,0 +1,29 @@
+[
+  {
+    "id": 1,
+    "startedAt": "2026-01-15T10:25:00",
+    "finishedAt": "2026-01-15T10:35:00",
+    "totalQuestions": 5,
+    "correctAnswers": 4,
+    "answers": [
+      {
+        "id": 1,
+        "runId": 1,
+        "questionId": 1,
+        "selectedAnswer": "A service-layer bean",
+        "isCorrect": true,
+        "topic": "spring",
+        "answeredAt": "2026-01-15T10:30:00"
+      },
+      {
+        "id": 2,
+        "runId": 1,
+        "questionId": 4,
+        "selectedAnswer": "Map",
+        "isCorrect": true,
+        "topic": "java",
+        "answeredAt": "2026-01-15T10:32:10"
+      }
+    ]
+  }
+]

@@ -1,5 +1,17 @@
 target/
 *.log
+*.tmp
+*.bak
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+.idea/
+.vscode/
+*.iml
 
 frontend/node_modules/
 frontend/dist/
@@ -7,3 +19,8 @@ frontend/*.tsbuildinfo
 
 data/answers.json
 data/runs.json
+data/*.local.json
+
+.env
+.env.*
+!.env.example
