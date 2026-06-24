@@ -14,7 +14,13 @@ public class QuizRun {
 
     private Integer totalQuestions;
 
+    private Integer answeredQuestions;
+
     private Integer correctAnswers;
+
+    private Boolean completed;
+
+    private String mode;
 
     private List<QuizRunAnswer> answers = new ArrayList<>();
 
@@ -56,6 +62,30 @@ public class QuizRun {
 
     public void setCorrectAnswers(Integer correctAnswers) {
         this.correctAnswers = correctAnswers;
+    }
+
+    public Integer getAnsweredQuestions() {
+        return answeredQuestions;
+    }
+
+    public void setAnsweredQuestions(Integer answeredQuestions) {
+        this.answeredQuestions = answeredQuestions;
+    }
+
+    public Boolean getCompleted() {
+        return completed;
+    }
+
+    public void setCompleted(Boolean completed) {
+        this.completed = completed;
+    }
+
+    public String getMode() {
+        return mode;
+    }
+
+    public void setMode(String mode) {
+        this.mode = mode;
     }
 
     public List<QuizRunAnswer> getAnswers() {

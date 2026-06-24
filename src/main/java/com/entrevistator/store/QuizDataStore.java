@@ -10,6 +10,8 @@ public interface QuizDataStore {
 
     List<Question> getQuestions();
 
+    List<Question> saveQuestions(List<Question> questions);
+
     UserAnswer saveUserAnswer(UserAnswer userAnswer);
 
     List<UserAnswer> getAnswers();

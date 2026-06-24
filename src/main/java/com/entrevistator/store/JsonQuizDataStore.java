@@ -49,6 +49,14 @@ public class JsonQuizDataStore implements QuizDataStore {
     }
 
     @Override
+    public synchronized List<Question> saveQuestions(List<Question> questions) {
+        List<Question> safeQuestions = questions == null ? List.of() : new ArrayList<>(questions);
+        safeQuestions.sort(Comparator.comparing(Question::getId));
+        writeJsonFile(questionsPath, safeQuestions);
+        return safeQuestions;
+    }
+
+    @Override
     public synchronized UserAnswer saveUserAnswer(UserAnswer userAnswer) {
         List<UserAnswer> answers = readAnswers();
         if (userAnswer.getId() == null) {

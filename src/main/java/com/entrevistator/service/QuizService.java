@@ -1,13 +1,21 @@
 package com.entrevistator.service;
 
+import com.entrevistator.dto.AnalyticsSummaryDTO;
 import com.entrevistator.dto.AnswerRequest;
 import com.entrevistator.dto.AnswerResponse;
+import com.entrevistator.dto.ExportResultsDTO;
+import com.entrevistator.dto.ExportRunAnswerDTO;
+import com.entrevistator.dto.ExportRunDTO;
 import com.entrevistator.dto.ProgressAnalyticsDTO;
+import com.entrevistator.dto.QuestionImportItemDTO;
+import com.entrevistator.dto.QuestionImportRequestDTO;
+import com.entrevistator.dto.QuestionImportResponseDTO;
 import com.entrevistator.dto.QuestionResponseDTO;
 import com.entrevistator.dto.QuizSessionAnswerResultDTO;
 import com.entrevistator.dto.QuizSessionResponseDTO;
 import com.entrevistator.dto.QuizSessionSubmitRequestDTO;
 import com.entrevistator.dto.QuizSessionSubmitResponseDTO;
+import com.entrevistator.dto.RunSummaryDTO;
 import com.entrevistator.dto.TopicAnalyticsDTO;
 import com.entrevistator.entity.Question;
 import com.entrevistator.entity.QuizRun;
@@ -25,6 +33,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -62,7 +71,7 @@ public class QuizService {
         return toQuestionResponseDTO(question);
     }
 
-    public QuizSessionResponseDTO getQuizSession() {
+    public QuizSessionResponseDTO getQuizSession(String mode) {
         try {
             assertRunLimitNotReached();
 
@@ -75,14 +84,15 @@ public class QuizService {
 
             List<UserAnswer> recentAnswers = getRecentAnswers();
             int sessionSize = Math.min(SESSION_SIZE, allQuestions.size());
-            List<Question> sessionQuestions = buildSessionQuestions(allQuestions, recentAnswers, sessionSize);
-            QuizRun quizRun = createQuizRun(sessionQuestions.size());
+            String normalizedMode = normalizeMode(mode);
+            List<Question> sessionQuestions = buildSessionQuestions(allQuestions, recentAnswers, sessionSize, normalizedMode);
+            QuizRun quizRun = createQuizRun(sessionQuestions.size(), normalizedMode);
 
             List<QuestionResponseDTO> questions = sessionQuestions.stream()
                     .map(this::toQuestionResponseDTO)
                     .toList();
 
-            return new QuizSessionResponseDTO(quizRun.getId(), questions);
+            return new QuizSessionResponseDTO(quizRun.getId(), normalizedMode, questions);
         } catch (ResponseStatusException exception) {
             throw exception;
         } catch (IllegalStateException exception) {
@@ -97,26 +107,26 @@ public class QuizService {
     public AnswerResponse validateAndSaveAnswer(AnswerRequest request) {
         EvaluatedAnswer evaluatedAnswer = request.runId() == null
                 ? evaluateAndSaveAnswer(request.questionId(), request.selectedAnswer())
-                : evaluateAndSaveAnswer(getQuizRunForSubmission(request.runId()), request.questionId(), request.selectedAnswer());
+                : evaluateAndSaveAnswer(getQuizRunForAnswering(request.runId()), request.questionId(), request.selectedAnswer());
         return new AnswerResponse(evaluatedAnswer.correct(), evaluatedAnswer.question().getExplanation());
     }
 
     public QuizSessionSubmitResponseDTO submitQuizSession(QuizSessionSubmitRequestDTO request) {
-        QuizRun quizRun = getQuizRunForSubmission(request.runId());
-
-        syncSubmittedAnswers(quizRun, request);
+        QuizRun quizRun = getQuizRunById(request.runId());
+        if (!isRunCompleted(quizRun)) {
+            syncSubmittedAnswers(quizRun, request);
+            markRunCompleted(quizRun);
+            quizDataStore.saveRun(quizRun);
+        }
 
         List<QuizSessionAnswerResultDTO> results = quizRun.getAnswers().stream()
                 .map(this::toSessionAnswerResult)
                 .toList();
-
-        int correctAnswers = (int) results.stream()
-                .filter(QuizSessionAnswerResultDTO::correct)
-                .count();
-
-        finalizeQuizRun(quizRun, results.size(), correctAnswers);
-
-        return new QuizSessionSubmitResponseDTO(results.size(), correctAnswers, results);
+        return new QuizSessionSubmitResponseDTO(
+                quizRun.getTotalQuestions() == null ? results.size() : quizRun.getTotalQuestions(),
+                quizRun.getCorrectAnswers() == null ? 0 : quizRun.getCorrectAnswers(),
+                results
+        );
     }
 
     public List<TopicAnalyticsDTO> getTopicAnalytics() {
@@ -143,7 +153,7 @@ public class QuizService {
     }
 
     public List<ProgressAnalyticsDTO> getProgressAnalytics() {
-        return getAllRunAnswers().stream()
+        return getCompletedRunAnswers().stream()
                 .collect(Collectors.groupingBy(this::toProgressGroup))
                 .entrySet().stream()
                 .map(entry -> toProgressAnalytics(entry.getKey(), entry.getValue()))
@@ -152,12 +162,130 @@ public class QuizService {
                 .toList();
     }
 
-    private List<Question> buildSessionQuestions(List<Question> allQuestions, List<UserAnswer> recentAnswers, int sessionSize) {
+    public AnalyticsSummaryDTO getAnalyticsSummary() {
+        List<QuizRun> allRuns = getStoredRuns();
+        List<QuizRun> completedRuns = getCompletedRunsInternal(allRuns);
+        long totalSessions = allRuns.size();
+        long completedSessions = completedRuns.size();
+        double completionRate = totalSessions == 0 ? 0.0 : (completedSessions * 100.0) / totalSessions;
+
+        RunSummaryDTO lastSessionResult = completedRuns.stream()
+                .max(Comparator.comparing(this::getRunFinishedAtSafe))
+                .map(this::toRunSummary)
+                .orElse(null);
+
+        return new AnalyticsSummaryDTO(completionRate, totalSessions, completedSessions, lastSessionResult);
+    }
+
+    public List<RunSummaryDTO> getCompletedRuns() {
+        return getCompletedRunsInternal(getStoredRuns()).stream()
+                .sorted(Comparator.comparing(this::getRunFinishedAtSafe).reversed())
+                .map(this::toRunSummary)
+                .toList();
+    }
+
+    public ExportResultsDTO exportResults() {
+        List<QuizRun> recentRuns = getStoredRuns().stream()
+                .sorted(Comparator.comparing(this::getRunStartedAtSafe).reversed())
+                .limit(10)
+                .toList();
+
+        return new ExportResultsDTO(
+                LocalDateTime.now(),
+                getAnalyticsSummary(),
+                recentRuns.stream().map(this::toExportRun).toList(),
+                getTopicAnalytics(),
+                getTopicGaps()
+        );
+    }
+
+    public QuestionImportResponseDTO importQuestions(QuestionImportRequestDTO request) {
+        List<Question> existingQuestions = new ArrayList<>(quizDataStore.getQuestions());
+        Map<Long, Question> questionsById = existingQuestions.stream()
+                .collect(Collectors.toMap(Question::getId, question -> question, (left, right) -> right, LinkedHashMap::new));
+
+        long nextId = existingQuestions.stream()
+                .map(Question::getId)
+                .filter(id -> id != null)
+                .mapToLong(Long::longValue)
+                .max()
+                .orElse(0L) + 1;
+
+        int importedCount = 0;
+        int updatedCount = 0;
+        int ignoredCount = 0;
+
+        for (QuestionImportItemDTO item : request.questions()) {
+            Question normalizedQuestion = normalizeImportedQuestion(item);
+            if (normalizedQuestion == null) {
+                ignoredCount++;
+                continue;
+            }
+
+            Long importedId = normalizedQuestion.getId();
+            boolean hasExplicitId = importedId != null;
+            boolean updatesExisting = hasExplicitId && questionsById.containsKey(importedId);
+
+            if (!hasExplicitId) {
+                normalizedQuestion.setId(nextId++);
+            } else if (!updatesExisting && importedId >= nextId) {
+                nextId = importedId + 1;
+            }
+
+            questionsById.put(normalizedQuestion.getId(), normalizedQuestion);
+            if (updatesExisting) {
+                updatedCount++;
+            } else {
+                importedCount++;
+            }
+        }
+
+        List<Question> mergedQuestions = questionsById.values().stream()
+                .sorted(Comparator.comparing(Question::getId))
+                .toList();
+        quizDataStore.saveQuestions(mergedQuestions);
+
+        return new QuestionImportResponseDTO(importedCount, updatedCount, ignoredCount, mergedQuestions.size());
+    }
+
+    private List<Question> buildSessionQuestions(List<Question> allQuestions, List<UserAnswer> recentAnswers, int sessionSize, String mode) {
+        if ("difficulty".equals(mode)) {
+            return buildDifficultySessionQuestions(allQuestions, recentAnswers, sessionSize);
+        }
+
+        return buildMockSessionQuestions(allQuestions, recentAnswers, sessionSize);
+    }
+
+    private List<Question> buildMockSessionQuestions(List<Question> allQuestions, List<UserAnswer> recentAnswers, int sessionSize) {
         Set<Long> selectedQuestionIds = new LinkedHashSet<>();
         List<Question> sessionQuestions = new ArrayList<>();
 
         addPrioritizedQuestions(sessionQuestions, selectedQuestionIds, allQuestions, recentAnswers, sessionSize);
         addRandomQuestions(sessionQuestions, selectedQuestionIds, allQuestions, sessionSize);
+
+        return sessionQuestions;
+    }
+
+    private List<Question> buildDifficultySessionQuestions(List<Question> allQuestions, List<UserAnswer> recentAnswers, int sessionSize) {
+        Set<Long> selectedQuestionIds = new LinkedHashSet<>();
+        List<Question> sessionQuestions = new ArrayList<>();
+
+        List<Question> prioritized = allQuestions.stream()
+                .collect(Collectors.toCollection(ArrayList::new));
+        Collections.shuffle(prioritized);
+        prioritized.sort(Comparator.comparingInt(this::getDifficultyWeight).reversed());
+
+        addPrioritizedQuestions(sessionQuestions, selectedQuestionIds, prioritized, recentAnswers, sessionSize);
+
+        for (Question question : prioritized) {
+            if (sessionQuestions.size() >= sessionSize) {
+                break;
+            }
+
+            if (selectedQuestionIds.add(question.getId())) {
+                sessionQuestions.add(question);
+            }
+        }
 
         return sessionQuestions;
     }
@@ -309,38 +437,51 @@ public class QuizService {
     }
 
     private EvaluatedAnswer evaluateAndSaveAnswer(QuizRun quizRun, Long questionId, String selectedAnswer) {
+        if (isRunCompleted(quizRun)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Quiz run is already finished");
+        }
+
         EvaluatedAnswer evaluatedAnswer = evaluateAndSaveAnswer(questionId, selectedAnswer);
         upsertRunAnswer(quizRun, evaluatedAnswer, selectedAnswer);
+        refreshRunStats(quizRun);
         quizDataStore.saveRun(quizRun);
         return evaluatedAnswer;
     }
 
-    private QuizRun createQuizRun(int totalQuestions) {
+    private QuizRun createQuizRun(int totalQuestions, String mode) {
         QuizRun quizRun = new QuizRun();
         quizRun.setStartedAt(LocalDateTime.now());
         quizRun.setTotalQuestions(totalQuestions);
+        quizRun.setAnsweredQuestions(0);
         quizRun.setCorrectAnswers(0);
+        quizRun.setCompleted(false);
+        quizRun.setMode(mode);
         return quizDataStore.saveRun(quizRun);
     }
 
-    private QuizRun getQuizRunForSubmission(Long runId) {
+    private QuizRun getQuizRunById(Long runId) {
         QuizRun quizRun = quizDataStore.getRuns().stream()
                 .filter(existingRun -> existingRun.getId().equals(runId))
                 .findFirst()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Quiz run not found"));
-
-        if (quizRun.getFinishedAt() != null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Quiz run is already finished");
-        }
-
+        refreshRunStats(quizRun);
         return quizRun;
     }
 
-    private void finalizeQuizRun(QuizRun quizRun, int totalQuestions, int correctAnswers) {
-        quizRun.setFinishedAt(LocalDateTime.now());
-        quizRun.setTotalQuestions(totalQuestions);
-        quizRun.setCorrectAnswers(correctAnswers);
-        quizDataStore.saveRun(quizRun);
+    private QuizRun getQuizRunForAnswering(Long runId) {
+        QuizRun quizRun = getQuizRunById(runId);
+        if (isRunCompleted(quizRun)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Quiz run is already finished");
+        }
+        return quizRun;
+    }
+
+    private void markRunCompleted(QuizRun quizRun) {
+        refreshRunStats(quizRun);
+        quizRun.setCompleted(true);
+        if (quizRun.getFinishedAt() == null) {
+            quizRun.setFinishedAt(LocalDateTime.now());
+        }
     }
 
     private void assertRunLimitNotReached() {
@@ -350,7 +491,7 @@ public class QuizService {
     }
 
     private List<TopicAnalyticsDTO> buildTopicAnalytics() {
-        Map<String, List<QuizRunAnswer>> answersByTopic = getAllRunAnswers().stream()
+        Map<String, List<QuizRunAnswer>> answersByTopic = getCompletedRunAnswers().stream()
                 .collect(Collectors.groupingBy(QuizRunAnswer::getTopic));
 
         return answersByTopic.entrySet().stream()
@@ -388,8 +529,8 @@ public class QuizService {
                 .toList();
     }
 
-    private List<QuizRunAnswer> getAllRunAnswers() {
-        return quizDataStore.getRuns().stream()
+    private List<QuizRunAnswer> getCompletedRunAnswers() {
+        return getCompletedRunsInternal(getStoredRuns()).stream()
                 .map(QuizRun::getAnswers)
                 .filter(answers -> answers != null)
                 .flatMap(List::stream)
@@ -428,6 +569,153 @@ public class QuizService {
         for (var answer : request.answers()) {
             evaluateAndSaveAnswer(quizRun, answer.questionId(), answer.selectedAnswer());
         }
+    }
+
+    private List<QuizRun> getStoredRuns() {
+        List<QuizRun> runs = quizDataStore.getRuns().stream()
+                .peek(this::refreshRunStats)
+                .toList();
+        return new ArrayList<>(runs);
+    }
+
+    private List<QuizRun> getCompletedRunsInternal(List<QuizRun> runs) {
+        return runs.stream()
+                .filter(this::isRunCompleted)
+                .toList();
+    }
+
+    private void refreshRunStats(QuizRun quizRun) {
+        List<QuizRunAnswer> answers = quizRun.getAnswers() == null ? List.of() : quizRun.getAnswers();
+        int answeredQuestions = answers.size();
+        int correctAnswers = (int) answers.stream()
+                .filter(answer -> Boolean.TRUE.equals(answer.getIsCorrect()))
+                .count();
+
+        quizRun.setAnsweredQuestions(answeredQuestions);
+        quizRun.setCorrectAnswers(correctAnswers);
+
+        int totalQuestions = quizRun.getTotalQuestions() == null ? answeredQuestions : quizRun.getTotalQuestions();
+        quizRun.setTotalQuestions(totalQuestions);
+
+        boolean completed = totalQuestions > 0 && answeredQuestions >= totalQuestions;
+        if (completed) {
+            quizRun.setCompleted(true);
+            if (quizRun.getFinishedAt() == null) {
+                quizRun.setFinishedAt(answers.stream()
+                        .map(QuizRunAnswer::getAnsweredAt)
+                        .filter(answeredAt -> answeredAt != null)
+                        .max(LocalDateTime::compareTo)
+                        .orElse(LocalDateTime.now()));
+            }
+        } else if (!Boolean.TRUE.equals(quizRun.getCompleted())) {
+            quizRun.setCompleted(false);
+        }
+    }
+
+    private boolean isRunCompleted(QuizRun quizRun) {
+        return Boolean.TRUE.equals(quizRun.getCompleted())
+                || (quizRun.getCompleted() == null && quizRun.getFinishedAt() != null);
+    }
+
+    private LocalDateTime getRunFinishedAtSafe(QuizRun quizRun) {
+        return quizRun.getFinishedAt() != null ? quizRun.getFinishedAt() : getRunStartedAtSafe(quizRun);
+    }
+
+    private LocalDateTime getRunStartedAtSafe(QuizRun quizRun) {
+        return quizRun.getStartedAt() != null ? quizRun.getStartedAt() : LocalDateTime.MIN;
+    }
+
+    private RunSummaryDTO toRunSummary(QuizRun quizRun) {
+        return new RunSummaryDTO(
+                quizRun.getId(),
+                quizRun.getMode() == null ? "mock" : quizRun.getMode(),
+                quizRun.getStartedAt(),
+                quizRun.getFinishedAt(),
+                quizRun.getTotalQuestions() == null ? 0 : quizRun.getTotalQuestions(),
+                quizRun.getAnsweredQuestions() == null ? 0 : quizRun.getAnsweredQuestions(),
+                quizRun.getCorrectAnswers() == null ? 0 : quizRun.getCorrectAnswers(),
+                isRunCompleted(quizRun)
+        );
+    }
+
+    private ExportRunDTO toExportRun(QuizRun quizRun) {
+        List<ExportRunAnswerDTO> answers = (quizRun.getAnswers() == null ? List.<QuizRunAnswer>of() : quizRun.getAnswers()).stream()
+                .sorted(Comparator.comparing(QuizRunAnswer::getAnsweredAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(answer -> new ExportRunAnswerDTO(
+                        answer.getQuestionId(),
+                        answer.getTopic(),
+                        answer.getSelectedAnswer(),
+                        Boolean.TRUE.equals(answer.getIsCorrect()),
+                        answer.getAnsweredAt()
+                ))
+                .toList();
+
+        return new ExportRunDTO(
+                quizRun.getId(),
+                quizRun.getMode() == null ? "mock" : quizRun.getMode(),
+                quizRun.getStartedAt(),
+                quizRun.getFinishedAt(),
+                quizRun.getTotalQuestions() == null ? 0 : quizRun.getTotalQuestions(),
+                quizRun.getAnsweredQuestions() == null ? 0 : quizRun.getAnsweredQuestions(),
+                quizRun.getCorrectAnswers() == null ? 0 : quizRun.getCorrectAnswers(),
+                isRunCompleted(quizRun),
+                answers
+        );
+    }
+
+    private Question normalizeImportedQuestion(QuestionImportItemDTO item) {
+        if (item == null) {
+            return null;
+        }
+
+        String questionText = firstNonBlank(item.questionText(), item.question());
+        List<String> options = item.options() == null ? List.of() : item.options().stream()
+                .filter(option -> option != null && !option.isBlank())
+                .map(String::trim)
+                .toList();
+
+        if (isBlank(questionText)
+                || isBlank(item.topic())
+                || options.size() < 2
+                || isBlank(item.correctAnswer())
+                || isBlank(item.explanation())
+                || options.stream().noneMatch(option -> option.equals(item.correctAnswer()))) {
+            return null;
+        }
+
+        Question question = new Question();
+        question.setId(item.id());
+        question.setTopic(item.topic().trim());
+        question.setDifficulty(isBlank(item.difficulty()) ? "medium" : item.difficulty().trim());
+        question.setQuestionText(questionText.trim());
+        question.setOptions(options);
+        question.setCorrectAnswer(item.correctAnswer().trim());
+        question.setExplanation(item.explanation().trim());
+        return question;
+    }
+
+    private String normalizeMode(String mode) {
+        return "difficulty".equalsIgnoreCase(mode) ? "difficulty" : "mock";
+    }
+
+    private int getDifficultyWeight(Question question) {
+        if (question.getDifficulty() == null) {
+            return 1;
+        }
+
+        return switch (question.getDifficulty().toLowerCase()) {
+            case "hard" -> 3;
+            case "medium" -> 2;
+            default -> 1;
+        };
+    }
+
+    private String firstNonBlank(String primary, String fallback) {
+        return !isBlank(primary) ? primary : fallback;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private Question getQuestionById(Long questionId) {

@@ -3,10 +3,13 @@
 @tailwind utilities;
 
 :root {
-  color: #0f172a;
-  background: #f8fafc;
+  color: #e2e8f0;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.16), transparent 24%),
+    radial-gradient(circle at top right, rgba(99, 102, 241, 0.12), transparent 28%),
+    linear-gradient(180deg, #020617 0%, #0f172a 45%, #020617 100%);
   font-family: "Inter", "Segoe UI", sans-serif;
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 html {
@@ -17,7 +20,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: #f8fafc;
+  background: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -33,4 +36,16 @@ button:focus-visible {
 
 ::selection {
   background-color: rgba(59, 130, 246, 0.18);
+}
+
+button,
+section,
+article {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease,
+    transform 160ms ease;
 }
